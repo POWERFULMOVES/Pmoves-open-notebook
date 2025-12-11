@@ -2,7 +2,7 @@ name: Publish Docker image (GHCR)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, PMOVES.AI-Edition-Hardened ]
     tags: [ 'v*.*.*' ]
 
 permissions:
@@ -27,6 +27,8 @@ jobs:
           images: ghcr.io/powerfulmoves/pmoves-open-notebook
           tags: |
             type=raw,value=main,enable={{is_default_branch}}
+            type=raw,value=v1-latest,enable=${{ github.ref == 'refs/heads/PMOVES.AI-Edition-Hardened' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/PMOVES.AI-Edition-Hardened' }}
             type=ref,event=tag
       - uses: docker/build-push-action@v6
         with:
