@@ -31,8 +31,14 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Claude review skipped (no API key)
+        if: ${{ secrets.ANTHROPIC_API_KEY == '' }}
+        run: |
+          echo "Skipping Claude Code Review: secrets.ANTHROPIC_API_KEY is not set."
+
       - name: Run Claude Code Review
         id: claude-review
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
         uses: anthropics/claude-code-action@beta
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -72,4 +78,3 @@ jobs:
           # if: |
           #   !contains(github.event.pull_request.title, '[skip-review]') &&
           #   !contains(github.event.pull_request.title, '[WIP]')
-
