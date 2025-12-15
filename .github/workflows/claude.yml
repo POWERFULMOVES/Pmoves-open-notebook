@@ -30,13 +30,13 @@ jobs:
           fetch-depth: 1
 
       - name: Claude run skipped (no API key)
-        if: ${{ secrets.ANTHROPIC_API_KEY == '' }}
+        if: ${{ !secrets.ANTHROPIC_API_KEY }}
         run: |
           echo "Skipping Claude Code: secrets.ANTHROPIC_API_KEY is not set."
 
       - name: Run Claude Code
         id: claude
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        if: ${{ secrets.ANTHROPIC_API_KEY }}
         uses: anthropics/claude-code-action@beta
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
