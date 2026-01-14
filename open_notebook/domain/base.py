@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, ClassVar, Dict, List, Optional, Type, TypeVar, Union, cast
 
 from loguru import logger
-from pydantic import BaseModel, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from open_notebook.database.repository import (
     ensure_record_id,
@@ -25,6 +25,7 @@ T = TypeVar("T", bound="ObjectModel")
 class ObjectModel(BaseModel):
     id: Optional[str] = None
     table_name: ClassVar[str] = ""
+    nullable_fields: ClassVar[set[str]] = set()  # Fields that can be saved as None
     created: Optional[datetime] = None
     updated: Optional[datetime] = None
 
@@ -110,7 +111,7 @@ class ObjectModel(BaseModel):
         return None
 
     async def save(self) -> None:
-        from open_notebook.domain.models import model_manager
+        from open_notebook.ai.models import model_manager
 
         try:
             self.model_validate(self.model_dump(), strict=True)
@@ -158,13 +159,20 @@ class ObjectModel(BaseModel):
         except ValidationError as e:
             logger.error(f"Validation failed: {e}")
             raise
+        except RuntimeError:
+            # Transaction conflicts should propagate for retry
+            raise
         except Exception as e:
             logger.error(f"Error saving record: {e}")
             raise DatabaseOperationError(e)
 
     def _prepare_save_data(self) -> Dict[str, Any]:
         data = self.model_dump()
-        return {key: value for key, value in data.items() if value is not None}
+        return {
+            key: value
+            for key, value in data.items()
+            if value is not None or key in self.__class__.nullable_fields
+        }
 
     async def delete(self) -> bool:
         if self.id is None:
@@ -203,18 +211,19 @@ class ObjectModel(BaseModel):
 
 
 class RecordModel(BaseModel):
+    model_config = ConfigDict(
+        validate_assignment=True,
+        arbitrary_types_allowed=True,
+        extra="allow",
+        from_attributes=True,
+        defer_build=True,
+    )
+
     record_id: ClassVar[str]
     auto_save: ClassVar[bool] = (
         False  # Default to False, can be overridden in subclasses
     )
     _instances: ClassVar[Dict[str, "RecordModel"]] = {}  # Store instances by record_id
-
-    class Config:
-        validate_assignment = True
-        arbitrary_types_allowed = True
-        extra = "allow"
-        from_attributes = True
-        defer_build = True
 
     def __new__(cls, **kwargs):
         # If an instance already exists for this record_id, return it

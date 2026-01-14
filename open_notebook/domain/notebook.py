@@ -1,13 +1,16 @@
 import asyncio
+import os
+from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Tuple, Union
 
 from loguru import logger
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from surreal_commands import submit_command
 from surrealdb import RecordID
 
+from open_notebook.ai.models import model_manager
 from open_notebook.database.repository import ensure_record_id, repo_query
 from open_notebook.domain.base import ObjectModel
-from open_notebook.domain.models import model_manager
 from open_notebook.exceptions import DatabaseOperationError, InvalidInputError
 from open_notebook.utils import split_text
 
@@ -141,6 +144,8 @@ class SourceInsight(ObjectModel):
 
 
 class Source(ObjectModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     table_name: ClassVar[str] = "source"
     asset: Optional[Asset] = None
     title: Optional[str] = None
@@ -149,9 +154,6 @@ class Source(ObjectModel):
     command: Optional[Union[str, RecordID]] = Field(
         default=None, description="Link to surreal-commands processing job"
     )
-
-    class Config:
-        arbitrary_types_allowed = True
 
     @field_validator("command", mode="before")
     @classmethod
@@ -262,83 +264,49 @@ class Source(ObjectModel):
             raise InvalidInputError("Notebook ID must be provided")
         return await self.relate("reference", notebook_id)
 
-    async def vectorize(self) -> None:
-        logger.info(f"Starting vectorization for source {self.id}")
-        EMBEDDING_MODEL = await model_manager.get_embedding_model()
+    async def vectorize(self) -> str:
+        """
+        Submit vectorization as a background job using the vectorize_source command.
+
+        This method now leverages the job-based architecture to prevent HTTP connection
+        pool exhaustion when processing large documents. The actual chunk processing
+        happens in the background worker pool, with natural concurrency control.
+
+        Returns:
+            str: The command/job ID that can be used to track progress via the commands API
+
+        Raises:
+            ValueError: If source has no text to vectorize
+            DatabaseOperationError: If job submission fails
+        """
+        logger.info(f"Submitting vectorization job for source {self.id}")
 
         try:
-            # DELETE EXISTING EMBEDDINGS FIRST - Makes vectorize() idempotent
-            delete_result = await repo_query(
-                "DELETE source_embedding WHERE source = $source_id",
-                {"source_id": ensure_record_id(self.id)}
-            )
-            deleted_count = len(delete_result) if delete_result else 0
-            if deleted_count > 0:
-                logger.info(f"Deleted {deleted_count} existing embeddings for source {self.id}")
-            else:
-                logger.debug(f"No existing embeddings found for source {self.id}")
-
             if not self.full_text:
-                logger.warning(f"No text to vectorize for source {self.id}")
-                return
+                raise ValueError(f"Source {self.id} has no text to vectorize")
 
-            chunks = split_text(
-                self.full_text,
+            # Submit the vectorize_source command which will:
+            # 1. Delete existing embeddings (idempotency)
+            # 2. Split text into chunks
+            # 3. Submit each chunk as an embed_chunk job
+            command_id = submit_command(
+                "open_notebook",      # app name
+                "vectorize_source",   # command name
+                {
+                    "source_id": str(self.id),
+                }
             )
-            chunk_count = len(chunks)
-            logger.info(f"Split into {chunk_count} chunks for source {self.id}")
 
-            if chunk_count == 0:
-                logger.warning("No chunks created after splitting")
-                return
+            command_id_str = str(command_id)
+            logger.info(
+                f"Vectorization job submitted for source {self.id}: "
+                f"command_id={command_id_str}"
+            )
 
-            # Process chunks concurrently using async gather
-            logger.info("Starting concurrent processing of chunks")
-
-            async def process_chunk(
-                idx: int, chunk: str
-            ) -> Tuple[int, List[float], str]:
-                logger.debug(f"Processing chunk {idx}/{chunk_count}")
-                try:
-                    if EMBEDDING_MODEL is None:
-                        raise ValueError("EMBEDDING_MODEL is not configured")
-                    embedding = (await EMBEDDING_MODEL.aembed([chunk]))[0]
-                    cleaned_content = chunk
-                    logger.debug(f"Successfully processed chunk {idx}")
-                    return (idx, embedding, cleaned_content)
-                except Exception as e:
-                    logger.error(f"Error processing chunk {idx}: {str(e)}")
-                    raise
-
-            # Create tasks for all chunks and process them concurrently
-            tasks = [process_chunk(idx, chunk) for idx, chunk in enumerate(chunks)]
-            results = await asyncio.gather(*tasks)
-
-            logger.info(f"Parallel processing complete. Got {len(results)} results")
-
-            # Insert results in order (they're already ordered by index)
-            for idx, embedding, content in results:
-                logger.debug(f"Inserting chunk {idx} into database")
-                await repo_query(
-                    """
-                    CREATE source_embedding CONTENT {
-                            "source": $source_id,
-                            "order": $order,
-                            "content": $content,
-                            "embedding": $embedding,
-                    };""",
-                    {
-                        "source_id": ensure_record_id(self.id),
-                        "order": idx,
-                        "content": content,
-                        "embedding": embedding,
-                    },
-                )
-
-            logger.info(f"Vectorization complete for source {self.id}")
+            return command_id_str
 
         except Exception as e:
-            logger.error(f"Error vectorizing source {self.id}: {str(e)}")
+            logger.error(f"Failed to submit vectorization job for source {self.id}: {e}")
             logger.exception(e)
             raise DatabaseOperationError(e)
 
@@ -382,6 +350,26 @@ class Source(ObjectModel):
 
         return data
 
+    async def delete(self) -> bool:
+        """Delete source and clean up associated file if it exists."""
+        # Clean up uploaded file if it exists
+        if self.asset and self.asset.file_path:
+            file_path = Path(self.asset.file_path)
+            if file_path.exists():
+                try:
+                    os.unlink(file_path)
+                    logger.info(f"Deleted file for source {self.id}: {file_path}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to delete file {file_path} for source {self.id}: {e}. "
+                        "Continuing with database deletion."
+                    )
+            else:
+                logger.debug(f"File {file_path} not found for source {self.id}, skipping cleanup")
+
+        # Call parent delete to remove database record
+        return await super().delete()
+
 
 class Note(ObjectModel):
     table_name: ClassVar[str] = "note"
@@ -422,6 +410,7 @@ class Note(ObjectModel):
 
 class ChatSession(ObjectModel):
     table_name: ClassVar[str] = "chat_session"
+    nullable_fields: ClassVar[set[str]] = {"model_override"}
     title: Optional[str] = None
     model_override: Optional[str] = None
 

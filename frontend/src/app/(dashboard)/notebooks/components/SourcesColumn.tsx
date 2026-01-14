@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import { SourceListResponse } from '@/lib/types/api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -10,7 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Plus, FileText, Link2, ChevronDown } from 'lucide-react'
+import { Plus, FileText, Link2, ChevronDown, Loader2 } from 'lucide-react'
 import { LoadingSpinner } from '@/components/common/LoadingSpinner'
 import { EmptyState } from '@/components/common/EmptyState'
 import { AddSourceDialog } from '@/components/sources/AddSourceDialog'
@@ -20,6 +20,8 @@ import { useDeleteSource, useRetrySource, useRemoveSourceFromNotebook } from '@/
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useModalManager } from '@/lib/hooks/use-modal-manager'
 import { ContextMode } from '../[id]/page'
+import { CollapsibleColumn, createCollapseButton } from '@/components/notebooks/CollapsibleColumn'
+import { useNotebookColumnsStore } from '@/lib/stores/notebook-columns-store'
 
 interface SourcesColumnProps {
   sources?: SourceListResponse[]
@@ -29,6 +31,10 @@ interface SourcesColumnProps {
   onRefresh?: () => void
   contextSelections?: Record<string, ContextMode>
   onContextModeChange?: (sourceId: string, mode: ContextMode) => void
+  // Pagination props
+  hasNextPage?: boolean
+  isFetchingNextPage?: boolean
+  fetchNextPage?: () => void
 }
 
 export function SourcesColumn({
@@ -37,7 +43,10 @@ export function SourcesColumn({
   notebookId,
   onRefresh,
   contextSelections,
-  onContextModeChange
+  onContextModeChange,
+  hasNextPage,
+  isFetchingNextPage,
+  fetchNextPage,
 }: SourcesColumnProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -51,6 +60,37 @@ export function SourcesColumn({
   const deleteSource = useDeleteSource()
   const retrySource = useRetrySource()
   const removeFromNotebook = useRemoveSourceFromNotebook()
+
+  // Collapsible column state
+  const { sourcesCollapsed, toggleSources } = useNotebookColumnsStore()
+  const collapseButton = useMemo(
+    () => createCollapseButton(toggleSources, 'Sources'),
+    [toggleSources]
+  )
+
+  // Scroll container ref for infinite scroll
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+
+  // Handle scroll for infinite loading
+  const handleScroll = useCallback(() => {
+    const container = scrollContainerRef.current
+    if (!container || !hasNextPage || isFetchingNextPage || !fetchNextPage) return
+
+    const { scrollTop, scrollHeight, clientHeight } = container
+    // Load more when user scrolls within 200px of the bottom
+    if (scrollHeight - scrollTop - clientHeight < 200) {
+      fetchNextPage()
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+  // Attach scroll listener
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    container.addEventListener('scroll', handleScroll)
+    return () => container.removeEventListener('scroll', handleScroll)
+  }, [handleScroll])
   
   const handleDeleteClick = (sourceId: string) => {
     setSourceToDelete(sourceId)
@@ -102,67 +142,86 @@ export function SourcesColumn({
   const handleSourceClick = (sourceId: string) => {
     openModal('source', sourceId)
   }
-  return (
-    <Card className="h-full flex flex-col flex-1 overflow-hidden">
-      <CardHeader className="pb-3 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-lg">Sources</CardTitle>
-          <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Source
-                <ChevronDown className="h-4 w-4 ml-2" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => { setDropdownOpen(false); setAddDialogOpen(true); }}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add New Source
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => { setDropdownOpen(false); setAddExistingDialogOpen(true); }}>
-                <Link2 className="h-4 w-4 mr-2" />
-                Add Existing Source
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </CardHeader>
 
-      <CardContent className="flex-1 overflow-y-auto min-h-0">
-        {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <LoadingSpinner />
-          </div>
-        ) : !sources || sources.length === 0 ? (
-          <EmptyState
-            icon={FileText}
-            title="No sources yet"
-            description="Add your first source to start building your knowledge base."
-          />
-        ) : (
-          <div className="space-y-3">
-            {sources.map((source) => (
-              <SourceCard
-                key={source.id}
-                source={source}
-                onClick={handleSourceClick}
-                onDelete={handleDeleteClick}
-                onRetry={handleRetry}
-                onRemoveFromNotebook={handleRemoveFromNotebook}
-                onRefresh={onRefresh}
-                showRemoveFromNotebook={true}
-                contextMode={contextSelections?.[source.id]}
-                onContextModeChange={onContextModeChange
-                  ? (mode) => onContextModeChange(source.id, mode)
-                  : undefined
-                }
+  return (
+    <>
+      <CollapsibleColumn
+        isCollapsed={sourcesCollapsed}
+        onToggle={toggleSources}
+        collapsedIcon={FileText}
+        collapsedLabel="Sources"
+      >
+        <Card className="h-full flex flex-col flex-1 overflow-hidden">
+          <CardHeader className="pb-3 flex-shrink-0">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-lg">Sources</CardTitle>
+              <div className="flex items-center gap-2">
+                <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm">
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Source
+                      <ChevronDown className="h-4 w-4 ml-2" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => { setDropdownOpen(false); setAddDialogOpen(true); }}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add New Source
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { setDropdownOpen(false); setAddExistingDialogOpen(true); }}>
+                      <Link2 className="h-4 w-4 mr-2" />
+                      Add Existing Source
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                {collapseButton}
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <LoadingSpinner />
+              </div>
+            ) : !sources || sources.length === 0 ? (
+              <EmptyState
+                icon={FileText}
+                title="No sources yet"
+                description="Add your first source to start building your knowledge base."
               />
-            ))}
-          </div>
-        )}
-      </CardContent>
-      
+            ) : (
+              <div className="space-y-3">
+                {sources.map((source) => (
+                  <SourceCard
+                    key={source.id}
+                    source={source}
+                    onClick={handleSourceClick}
+                    onDelete={handleDeleteClick}
+                    onRetry={handleRetry}
+                    onRemoveFromNotebook={handleRemoveFromNotebook}
+                    onRefresh={onRefresh}
+                    showRemoveFromNotebook={true}
+                    contextMode={contextSelections?.[source.id]}
+                    onContextModeChange={onContextModeChange
+                      ? (mode) => onContextModeChange(source.id, mode)
+                      : undefined
+                    }
+                  />
+                ))}
+                {/* Loading indicator for infinite scroll */}
+                {isFetchingNextPage && (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </CollapsibleColumn>
+
       <AddSourceDialog
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
@@ -197,6 +256,6 @@ export function SourcesColumn({
         isLoading={removeFromNotebook.isPending}
         confirmVariant="default"
       />
-    </Card>
+    </>
   )
 }

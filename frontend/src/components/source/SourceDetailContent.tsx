@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { isAxiosError } from 'axios'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { sourcesApi } from '@/lib/api/sources'
 import { insightsApi, SourceInsightResponse } from '@/lib/api/insights'
 import { transformationsApi } from '@/lib/api/transformations'
@@ -23,6 +24,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import {
   Select,
   SelectContent,
@@ -79,6 +90,8 @@ export function SourceDetailContent({
   const [isDownloadingFile, setIsDownloadingFile] = useState(false)
   const [fileAvailable, setFileAvailable] = useState<boolean | null>(null)
   const [selectedInsight, setSelectedInsight] = useState<SourceInsightResponse | null>(null)
+  const [insightToDelete, setInsightToDelete] = useState<string | null>(null)
+  const [deletingInsight, setDeletingInsight] = useState(false)
 
   const fetchSource = useCallback(async () => {
     try {
@@ -148,6 +161,24 @@ export function SourceDetailContent({
       toast.error('Failed to create insight')
     } finally {
       setCreatingInsight(false)
+    }
+  }
+
+  const handleDeleteInsight = async (e?: React.MouseEvent) => {
+    e?.preventDefault()
+    if (!insightToDelete) return
+
+    try {
+      setDeletingInsight(true)
+      await insightsApi.delete(insightToDelete)
+      toast.success('Insight deleted successfully')
+      setInsightToDelete(null)
+      await fetchInsights()
+    } catch (err) {
+      console.error('Failed to delete insight:', err)
+      toast.error('Failed to delete insight')
+    } finally {
+      setDeletingInsight(false)
     }
   }
 
@@ -461,6 +492,7 @@ export function SourceDetailContent({
                 )}
                 <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none prose-headings:font-semibold prose-a:text-blue-600 prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-p:mb-4 prose-p:leading-7 prose-li:mb-2">
                   <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
                     components={{
                       p: ({ children }) => <p className="mb-4">{children}</p>,
                       h1: ({ children }) => <h1 className="text-2xl font-bold mt-6 mb-4">{children}</h1>,
@@ -469,6 +501,16 @@ export function SourceDetailContent({
                       ul: ({ children }) => <ul className="mb-4 list-disc pl-6">{children}</ul>,
                       ol: ({ children }) => <ol className="mb-4 list-decimal pl-6">{children}</ol>,
                       li: ({ children }) => <li className="mb-1">{children}</li>,
+                      table: ({ children }) => (
+                        <div className="my-4 overflow-x-auto">
+                          <table className="min-w-full border-collapse border border-border">{children}</table>
+                        </div>
+                      ),
+                      thead: ({ children }) => <thead className="bg-muted">{children}</thead>,
+                      tbody: ({ children }) => <tbody>{children}</tbody>,
+                      tr: ({ children }) => <tr className="border-b border-border">{children}</tr>,
+                      th: ({ children }) => <th className="border border-border px-3 py-2 text-left font-semibold">{children}</th>,
+                      td: ({ children }) => <td className="border border-border px-3 py-2">{children}</td>,
                     }}
                   >
                     {source.full_text || 'No content available'}
@@ -557,28 +599,21 @@ export function SourceDetailContent({
                               {insight.insight_type}
                             </Badge>
                           </div>
-                          {insight.created && (
-                            <span className="text-xs text-muted-foreground">
-                              {(() => {
-                                try {
-                                  const date = new Date(insight.created)
-                                  if (isNaN(date.getTime())) {
-                                    return 'Unknown date'
-                                  }
-                                  return formatDistanceToNow(date, { addSuffix: true })
-                                } catch {
-                                  return 'Unknown date'
-                                }
-                              })()}
-                            </span>
-                          )}
                         </div>
                         <p className="mt-2 text-sm text-muted-foreground">
                           {insight.content.slice(0, 180)}{insight.content.length > 180 ? '…' : ''}
                         </p>
-                        <div className="mt-3 flex justify-end">
+                        <div className="mt-3 flex justify-end gap-2">
                           <Button size="sm" variant="outline" onClick={() => setSelectedInsight(insight)}>
                             View Insight
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setInsightToDelete(insight.id)}
+                            className="text-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
                       </div>
@@ -746,7 +781,41 @@ export function SourceDetailContent({
           }
         }}
         insight={selectedInsight ?? undefined}
+        onDelete={async (insightId) => {
+          try {
+            await insightsApi.delete(insightId)
+            toast.success('Insight deleted successfully')
+            setSelectedInsight(null)
+            await fetchInsights()
+          } catch (err) {
+            console.error('Failed to delete insight:', err)
+            toast.error('Failed to delete insight')
+          }
+        }}
       />
+
+      <AlertDialog open={!!insightToDelete} onOpenChange={() => setInsightToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Insight?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This insight will be permanently deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingInsight}>Cancel</AlertDialogCancel>
+            <AlertDialogAction asChild>
+              <Button
+                onClick={handleDeleteInsight}
+                disabled={deletingInsight}
+                variant="destructive"
+              >
+                {deletingInsight ? 'Deleting...' : 'Delete'}
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
