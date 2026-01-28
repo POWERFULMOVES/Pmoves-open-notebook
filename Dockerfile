@@ -44,6 +44,10 @@ WORKDIR /app
 # Runtime stage
 FROM python:3.12-slim-bookworm AS runtime
 
+# Security: Run as non-root user (PMOVES standard: UID/GID 1000)
+RUN groupadd -g 1000 -r opennotebook && \
+    useradd -u 1000 -r -g opennotebook -m -s /sbin/nologin -c "Open Notebook user" opennotebook
+
 # Install only runtime system dependencies (no build tools)
 # Add Node.js 20.x LTS for running frontend
 RUN apt-get update && apt-get upgrade -y && apt-get install -y \
@@ -61,19 +65,19 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 
 # Copy the virtual environment from builder stage
-COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder --chown=opennotebook:opennotebook /app/.venv /app/.venv
 
 # Copy the application code
-COPY --from=builder /app /app
+COPY --from=builder --chown=opennotebook:opennotebook /app /app
 
 # Ensure uv uses the existing venv without attempting network operations
 ENV UV_NO_SYNC=1
 ENV VIRTUAL_ENV=/app/.venv
 
 # Copy built frontend from builder stage
-COPY --from=builder /app/frontend/.next/standalone /app/frontend/
-COPY --from=builder /app/frontend/.next/static /app/frontend/.next/static
-COPY --from=builder /app/frontend/public /app/frontend/public
+COPY --from=builder --chown=opennotebook:opennotebook /app/frontend/.next/standalone /app/frontend/
+COPY --from=builder --chown=opennotebook:opennotebook /app/frontend/.next/static /app/frontend/.next/static
+COPY --from=builder --chown=opennotebook:opennotebook /app/frontend/public /app/frontend/public
 
 # Expose ports for Frontend and API
 EXPOSE 8502 5055
@@ -87,8 +91,12 @@ RUN chmod +x /app/scripts/wait-for-api.sh
 # Copy supervisord configuration
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Create log directories
-RUN mkdir -p /var/log/supervisor
+# Create log directories with proper permissions
+RUN mkdir -p /var/log/supervisor && \
+    chown -R opennotebook:opennotebook /var/log/supervisor /app/data
+
+# Switch to non-root user
+USER opennotebook
 
 # Runtime API URL Configuration
 # The API_URL environment variable can be set at container runtime to configure
