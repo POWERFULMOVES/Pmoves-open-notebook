@@ -136,14 +136,16 @@ class TestSourceDomain:
             source = Source(
                 id="source:test_delete",
                 title="Test Source",
-                asset=Asset(file_path=str(tmp_path))
+                asset=Asset(file_path=str(tmp_path)),
             )
 
             # Verify file exists
             assert tmp_path.exists()
 
             # Mock the parent delete method to avoid database operations
-            with patch.object(Source.__bases__[0], 'delete', new_callable=AsyncMock) as mock_delete:
+            with patch.object(
+                Source.__bases__[0], "delete", new_callable=AsyncMock
+            ) as mock_delete:
                 mock_delete.return_value = True
 
                 # Delete the source
@@ -165,14 +167,12 @@ class TestSourceDomain:
     async def test_source_delete_without_file(self):
         """Test that deleting a source without a file doesn't fail."""
         # Create source without file asset
-        source = Source(
-            id="source:test_no_file",
-            title="Test Source",
-            asset=None
-        )
+        source = Source(id="source:test_no_file", title="Test Source", asset=None)
 
         # Mock the parent delete method
-        with patch.object(Source.__bases__[0], 'delete', new_callable=AsyncMock) as mock_delete:
+        with patch.object(
+            Source.__bases__[0], "delete", new_callable=AsyncMock
+        ) as mock_delete:
             mock_delete.return_value = True
 
             # Delete should complete without error
@@ -187,11 +187,13 @@ class TestSourceDomain:
         source = Source(
             id="source:test_missing_file",
             title="Test Source",
-            asset=Asset(file_path="/nonexistent/path/file.txt")
+            asset=Asset(file_path="/nonexistent/path/file.txt"),
         )
 
         # Mock the parent delete method
-        with patch.object(Source.__bases__[0], 'delete', new_callable=AsyncMock) as mock_delete:
+        with patch.object(
+            Source.__bases__[0], "delete", new_callable=AsyncMock
+        ) as mock_delete:
             mock_delete.return_value = True
 
             # Delete should complete even though file doesn't exist
@@ -226,16 +228,18 @@ class TestNoteDomain:
         with pytest.raises(InvalidInputError, match="Note content cannot be empty"):
             Note(title="Test", content="   ")
 
-    def test_note_embedding_enabled(self):
-        """Test notes have embedding enabled by default."""
+    def test_note_content_for_embedding(self):
+        """Test notes can hold content for embedding.
+
+        Note: Embedding is now handled via command submission in Note.save(),
+        not via needs_embedding() method. This test verifies basic content handling.
+        """
         note = Note(title="Test", content="Test content")
+        assert note.content == "Test content"
 
-        assert note.needs_embedding() is True
-        assert note.get_embedding_content() == "Test content"
-
-        # Test with None content
+        # Test with None content - valid, no embedding will be submitted
         note2 = Note(title="Test", content=None)
-        assert note2.get_embedding_content() is None
+        assert note2.content is None
 
 
 # ============================================================================
@@ -272,7 +276,9 @@ class TestPodcastDomain:
                 name="Test",
                 tts_provider="openai",
                 tts_model="tts-1",
-                speakers=[{"name": "Speaker 1"}],  # Missing voice_id, backstory, personality
+                speakers=[
+                    {"name": "Speaker 1"}
+                ],  # Missing voice_id, backstory, personality
             )
 
         # Test valid - single speaker with all fields
@@ -345,7 +351,9 @@ class TestEpisodeProfile:
     def test_episode_profile_segment_validation(self):
         """Test segment count validation (3-20)."""
         # Test invalid - too few segments
-        with pytest.raises(ValidationError, match="Number of segments must be between 3 and 20"):
+        with pytest.raises(
+            ValidationError, match="Number of segments must be between 3 and 20"
+        ):
             EpisodeProfile(
                 name="Test",
                 speaker_config="default",
@@ -358,7 +366,9 @@ class TestEpisodeProfile:
             )
 
         # Test invalid - too many segments
-        with pytest.raises(ValidationError, match="Number of segments must be between 3 and 20"):
+        with pytest.raises(
+            ValidationError, match="Number of segments must be between 3 and 20"
+        ):
             EpisodeProfile(
                 name="Test",
                 speaker_config="default",

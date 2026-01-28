@@ -57,6 +57,7 @@ User documentation is at @docs/
 - **Data Fetching**: TanStack Query (React Query)
 - **Styling**: Tailwind CSS + Shadcn/ui
 - **Build Tool**: Webpack (via Next.js)
+- **i18n compatible**: All front-end changes must also consider the translation keys
 
 ### API Backend (`api/` + `open_notebook/`)
 - **Framework**: FastAPI 0.104+
@@ -170,7 +171,7 @@ See dedicated CLAUDE.md files for detailed guidance:
 
 - **Unit tests**: `tests/test_domain.py`, `test_models_api.py`
 - **Graph tests**: `tests/test_graphs.py` (workflow integration)
-- **Utils tests**: `tests/test_utils.py`
+- **Utils tests**: `tests/test_utils.py`, `tests/test_chunking.py`, `tests/test_embedding.py`
 - **Run all**: `uv run pytest tests/`
 - **Coverage**: Check with `pytest --cov`
 

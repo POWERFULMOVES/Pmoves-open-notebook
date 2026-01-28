@@ -14,7 +14,6 @@ from open_notebook.utils import (
     parse_thinking_content,
     remove_non_ascii,
     remove_non_printable,
-    split_text,
     token_count,
 )
 from open_notebook.utils.context_builder import ContextBuilder, ContextConfig
@@ -26,11 +25,6 @@ from open_notebook.utils.context_builder import ContextBuilder, ContextConfig
 
 class TestTextUtilities:
     """Test suite for text utility functions."""
-
-    def test_split_text_empty_string(self):
-        """Test splitting empty or very short strings."""
-        assert split_text("") == []
-        assert split_text("short") == ["short"]
 
     def test_remove_non_ascii(self):
         """Test removal of non-ASCII characters."""
@@ -52,7 +46,7 @@ class TestTextUtilities:
     def test_remove_non_printable(self):
         """Test removal of non-printable characters."""
         # Text with various Unicode whitespace and control chars
-        text = "Hello\u2000World\u200B\u202FTest"
+        text = "Hello\u2000World\u200b\u202fTest"
         result = remove_non_printable(text)
 
         # Should have regular spaces and printable chars only
@@ -146,7 +140,9 @@ class TestTokenUtilities:
         from unittest.mock import patch
 
         # Make tiktoken raise an ImportError to trigger fallback
-        with patch("tiktoken.get_encoding", side_effect=ImportError("tiktoken not available")):
+        with patch(
+            "tiktoken.get_encoding", side_effect=ImportError("tiktoken not available")
+        ):
             text = "one two three four five"
             count = token_count(text)
 
@@ -253,7 +249,7 @@ class TestContextBuilder:
             source_id="source:123",
             notebook_id="notebook:456",
             max_tokens=1000,
-            include_insights=False
+            include_insights=False,
         )
 
         assert builder.source_id == "source:123"

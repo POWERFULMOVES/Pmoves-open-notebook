@@ -2,7 +2,13 @@ from datetime import datetime
 from typing import Any, ClassVar, Dict, List, Optional, Type, TypeVar, Union, cast
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from open_notebook.database.repository import (
     ensure_record_id,
@@ -104,33 +110,18 @@ class ObjectModel(BaseModel):
                 return subclass
         return None
 
-    def needs_embedding(self) -> bool:
-        return False
-
-    def get_embedding_content(self) -> Optional[str]:
-        return None
-
     async def save(self) -> None:
-        from open_notebook.ai.models import model_manager
+        """
+        Save the model to the database.
 
+        Note: Embedding is no longer generated inline. Subclasses that need
+        embedding should override save() to submit the appropriate embed_*
+        command after calling super().save().
+        """
         try:
             self.model_validate(self.model_dump(), strict=True)
             data = self._prepare_save_data()
             data["updated"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            if self.needs_embedding():
-                embedding_content = self.get_embedding_content()
-                if embedding_content:
-                    EMBEDDING_MODEL = await model_manager.get_embedding_model()
-                    if not EMBEDDING_MODEL:
-                        logger.warning(
-                            "No embedding model found. Content will not be searchable."
-                        )
-                    data["embedding"] = (
-                        (await EMBEDDING_MODEL.aembed([embedding_content]))[0]
-                        if EMBEDDING_MODEL
-                        else []
-                    )
 
             repo_result: Union[List[Dict[str, Any]], Dict[str, Any]]
             if self.id is None:
@@ -148,7 +139,9 @@ class ObjectModel(BaseModel):
                 )
             # Update the current instance with the result
             # repo_result is a list of dictionaries
-            result_list: List[Dict[str, Any]] = repo_result if isinstance(repo_result, list) else [repo_result]
+            result_list: List[Dict[str, Any]] = (
+                repo_result if isinstance(repo_result, list) else [repo_result]
+            )
             for key, value in result_list[0].items():
                 if hasattr(self, key):
                     if isinstance(getattr(self, key), BaseModel):

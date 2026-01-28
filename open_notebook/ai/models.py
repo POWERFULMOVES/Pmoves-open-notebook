@@ -173,13 +173,10 @@ class ModelManager:
             model_id = defaults.default_chat_model
         elif model_type == "transformation":
             model_id = (
-                defaults.default_transformation_model
-                or defaults.default_chat_model
+                defaults.default_transformation_model or defaults.default_chat_model
             )
         elif model_type == "tools":
-            model_id = (
-                defaults.default_tools_model or defaults.default_chat_model
-            )
+            model_id = defaults.default_tools_model or defaults.default_chat_model
         elif model_type == "embedding":
             model_id = defaults.default_embedding_model
         elif model_type == "text_to_speech":
@@ -190,9 +187,21 @@ class ModelManager:
             model_id = defaults.large_context_model
 
         if not model_id:
+            logger.warning(
+                f"No default model configured for type '{model_type}'. "
+                f"Please go to Settings → Models and set a default model."
+            )
             return None
 
-        return await self.get_model(model_id, **kwargs)
+        try:
+            return await self.get_model(model_id, **kwargs)
+        except ValueError as e:
+            logger.error(
+                f"Failed to load default model for type '{model_type}': {e}. "
+                f"The configured model_id '{model_id}' may have been deleted or misconfigured. "
+                f"Please go to Settings → Models and reconfigure the default model."
+            )
+            return None
 
 
 model_manager = ModelManager()
